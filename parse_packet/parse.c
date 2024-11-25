@@ -17,7 +17,7 @@ struct packet_event {
   __u32 daddr;
   __u16 sport;
   __u16 dport;
-};
+} __attribute__((packed));
 
 struct {
   __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -53,36 +53,44 @@ int classify_packet(struct xdp_md *ctx) {
       __be16 protocol_type;
       __u8 vni[3];
       __u8 reserved;
-    } *geneve = (void *)(udp+1);
+    } __attribute__((packed));
+
+    struct genevehdr *geneve = (void *)(udp + 1);
     if ((void *)(geneve + 1) > data_end) return XDP_DROP;
 
     // Check inner Ethertype
     if (geneve->protocol_type == bpf_htons(ETH_P_TEB)) {
-        // Process inner IPv4 packet
-        struct iphdr *inner_ip = (void *)geneve + sizeof(*geneve) + geneve->opt_len*4 + 14;
-        if ((void *)(inner_ip + 1) > data_end) return XDP_DROP;
+      struct ethhdr *inner_eth = (void *)geneve + sizeof(*geneve) + geneve->opt_len * 4;
+      if ((void *)(inner_eth + 1) > data_end) return XDP_DROP;
 
-        if (inner_ip->protocol == IPPROTO_TCP) {
-          evt.protocol = IPPROTO_TCP;
-            struct tcphdr *tcp1 = (void *)inner_ip + inner_ip->ihl*4;
-            if ((void *)(tcp1+1) > data_end) return XDP_PASS;
+      // Process inner IPv4 packet
+      struct iphdr *inner_ip = (void *)inner_eth + sizeof(*inner_eth);
+      if ((void *)(inner_ip + 1) > data_end) return XDP_DROP;
 
-            evt.sport = bpf_ntohl(tcp1->source);
-            evt.dport = bpf_ntohl(tcp1->dest);
-        } else if (inner_ip->protocol == IPPROTO_UDP) {
-          evt.protocol = IPPROTO_UDP;
-          struct udphdr *udp1 = (void *)inner_ip + inner_ip->ihl*4;
-          if ((void *)(udp1+1) > data_end) return XDP_PASS;
+      if (inner_ip->protocol == IPPROTO_TCP) {
+        evt.protocol = IPPROTO_TCP;
 
-          evt.sport = bpf_ntohl(udp1->source);
-          evt.dport = bpf_ntohl(udp1->dest);
-        } else if (inner_ip->protocol == IPPROTO_ICMP) {
-          evt.protocol = IPPROTO_ICMP;
-        }
-        evt.saddr = bpf_ntohl(inner_ip->saddr);
-        evt.daddr = bpf_ntohl(inner_ip->daddr);
+        struct tcphdr *tcp1 = (void *)inner_ip + inner_ip->ihl*4;
+        if ((void *)(tcp1+1) > data_end) return XDP_PASS;
 
-        bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+        evt.sport = bpf_ntohl(tcp1->source);
+        evt.dport = bpf_ntohl(tcp1->dest);
+      } else if (inner_ip->protocol == IPPROTO_UDP) {
+        evt.protocol = IPPROTO_UDP;
+        
+        struct udphdr *udp1 = (void *)inner_ip + inner_ip->ihl*4;
+        if ((void *)(udp1+1) > data_end) return XDP_PASS;
+
+        evt.sport = bpf_ntohl(udp1->source);
+        evt.dport = bpf_ntohl(udp1->dest);
+      } else if (inner_ip->protocol == IPPROTO_ICMP) {
+        evt.protocol = IPPROTO_ICMP;
+      }
+
+      evt.saddr = bpf_ntohl(inner_ip->saddr);
+      evt.daddr = bpf_ntohl(inner_ip->daddr);
+
+      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
     }
   }
 
