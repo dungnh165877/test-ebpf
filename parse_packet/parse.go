@@ -34,8 +34,8 @@ func main() {
 		panic(err)
 	}
 
-	var objs counterObjects
-	if err := loadCounterObjects(&objs, nil); err != nil {
+	var objs parseObjects
+	if err := loadParseObjects(&objs, nil); err != nil {
 		panic(err)
 	}
 	defer objs.Close()
