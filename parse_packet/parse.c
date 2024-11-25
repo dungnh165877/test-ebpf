@@ -56,9 +56,6 @@ int classify_packet(struct xdp_md *ctx) {
     } *geneve = (void *)(udp+1);
     if ((void *)(geneve + 1) > data_end) return XDP_DROP;
 
-    bpf_printk("test\n");
-    bpf_printk("TCP packet detected %d\n", __constant_ntohs(geneve->protocol_type));
-
     // Check inner Ethertype
     if (geneve->protocol_type == bpf_htons(ETH_P_TEB)) {
         // Process inner IPv4 packet
