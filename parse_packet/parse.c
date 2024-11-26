@@ -60,6 +60,19 @@ int classify_packet(struct xdp_md *ctx) {
 
     // Check inner Ethertype
     if (geneve->protocol_type == bpf_htons(ETH_P_TEB)) {
+      __u8 *options_start = (__u8 *)(geneve + 1); // Start of options after the Geneve header
+      __u16 options_length = geneve->opt_len * 4;
+      bpf_trace_printk("Geneve options length: %u bytes\n", options_length);
+
+      for (__u16 i = 0; i < options_length; i++) {
+        __u8 option_byte = options_start[i];
+        bpf_trace_printk("Option[%u]: 0x%x\n", i, option_byte);
+      }
+
+      __u32 *vpc_id_ptr = (__u32 *)(options_start + options_length - 4);
+      __u32 vpc_id = bpf_ntohl(*vpc_id_ptr);
+      bpf_trace_printk("VPC ID: %u\n", vpc_id);
+
       struct ethhdr *inner_eth = (void *)geneve + sizeof(*geneve) + geneve->opt_len * 4;
       if ((void *)(inner_eth + 1) > data_end) return XDP_DROP;
 
