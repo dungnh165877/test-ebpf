@@ -88,17 +88,15 @@ static __always_inline int process_geneve(struct __sk_buff *skb)
         __u16 old_udp_len = bpf_ntohs(udp->len);
         __u16 new_udp_len = old_udp_len + 4;
         udp->len = bpf_htons(new_udp_len);
+        // Update checksum UDP
+        bpf_l4_csum_replace(skb, offsetof(struct udphdr, check), old_udp_len, new_udp_len, BPF_F_PSEUDO_HDR | sizeof(__u16));
 
         // Update IP total length
         __u16 old_ip_len = bpf_ntohs(ip->tot_len);
         __u16 new_ip_len = old_ip_len + 4;
         ip->tot_len = bpf_htons(new_ip_len);
-
-        // Update checksum IP
-        bpf_l3_csum_replace(skb, offsetof(struct iphdr, check), old_ip_len, new_ip_len, 0);
-
-        // Update checksum UDP
-        bpf_l4_csum_replace(skb, offsetof(struct udphdr, check), old_udp_len, new_udp_len, BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0);
+        // update checksum IP
+        bpf_l3_csum_replace(skb, offsetof(struct iphdr, check), old_ip_len, new_ip_len, sizeof(__u16));
     }
 
     return TC_ACT_OK;
