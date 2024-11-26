@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "if_ether.h": "c",
+        "udp.h": "c",
+        "types.h": "c"
+    }
+}
