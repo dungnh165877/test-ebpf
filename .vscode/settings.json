@@ -5,6 +5,12 @@
         "types.h": "c",
         "genetlink.h": "c",
         "if_packet.h": "c",
-        "if_vlan.h": "c"
+        "if_vlan.h": "c",
+        "bpf_common.h": "c",
+        "icmp.h": "c",
+        "tcp.h": "c",
+        "if.h": "c",
+        "socket.h": "c",
+        "features.h": "c"
     }
 }

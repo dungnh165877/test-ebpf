@@ -10,9 +10,11 @@
 #include <linux/udp.h>
 #include <linux/bpf_common.h>
 
+#define ICMP_HEADER_LENGTH 8
+
 struct packet_event {
   __u32 protocol;
-  __u32 packet_len;
+  __u32 payload_len;
   __u32 saddr;
   __u32 daddr;
   __u16 sport;
@@ -36,7 +38,28 @@ int classify_packet(struct xdp_md *ctx) {
     if ((void *)(ip+1) > data_end) return XDP_PASS;
 
     struct packet_event evt = {};
-    evt.packet_len = (__u32)(data_end - data);
+
+    if (ip->protocol == IPPROTO_ICMP) {
+      evt.protocol = IPPROTO_ICMP;
+      evt.saddr = bpf_ntohl(ip->saddr);
+      evt.daddr = bpf_ntohl(ip->daddr);
+      evt.payload_len = data_end - (void *)(ip + ip->ihl*4 + ICMP_HEADER_LENGTH);
+      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      return XDP_PASS;
+    }
+
+    if (ip->protocol == IPPROTO_TCP) {
+      evt.protocol = IPPROTO_TCP;
+      evt.saddr = bpf_ntohl(ip->saddr);
+      evt.daddr = bpf_ntohl(ip->daddr);
+      struct tcphdr *tcph = (void *)ip + ip->ihl*4;
+      if ((void *)(tcph+1) > data_end) return XDP_PASS;
+      evt.sport = bpf_ntohl(tcph->source);
+      evt.dport = bpf_ntohl(tcph->dest);
+      evt.payload_len = data_end - (void *)(tcph + sizeof(struct tcphdr));
+      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      return XDP_PASS;
+    }
 
     if (ip->protocol != IPPROTO_UDP) return XDP_PASS;
 
@@ -44,7 +67,16 @@ int classify_packet(struct xdp_md *ctx) {
     if ((void *)(udp+1) > data_end) return XDP_PASS;
 
     // Check UDP destination port for Geneve
-    if (udp->dest != bpf_htons(6081)) return XDP_PASS;
+    if (udp->dest != bpf_htons(6081)) {
+      evt.protocol = IPPROTO_UDP;
+      evt.saddr = bpf_ntohl(ip->saddr);
+      evt.daddr = bpf_ntohl(ip->daddr);
+      evt.sport = bpf_ntohl(udp->source);
+      evt.dport = bpf_ntohl(udp->dest);
+      evt.payload_len = data_end - (void *)(udp + sizeof(struct udphdr));
+      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      return XDP_PASS;
+    };
 
     // Geneve Header (8 bytes fixed size)
     struct genevehdr {
@@ -62,18 +94,10 @@ int classify_packet(struct xdp_md *ctx) {
     if (geneve->protocol_type == bpf_htons(ETH_P_TEB)) {
       __u8 *options_start = (__u8 *)(geneve + 1); // Start of options after the Geneve header
       __u16 options_length = geneve->opt_len * 4;
-      bpf_trace_printk("Geneve options length: %u bytes\n", options_length);
+      void *inner_packet_start = (void *)geneve + sizeof(*geneve) + geneve->opt_len * 4;
+      if (inner_packet_start > data_end) return XDP_DROP;
 
-      for (__u16 i = 0; i < options_length; i++) {
-        __u8 option_byte = options_start[i];
-        bpf_trace_printk("Option[%u]: 0x%x\n", i, option_byte);
-      }
-
-      __u32 *vpc_id_ptr = (__u32 *)(options_start + options_length - 4);
-      __u32 vpc_id = bpf_ntohl(*vpc_id_ptr);
-      bpf_trace_printk("VPC ID: %u\n", vpc_id);
-
-      struct ethhdr *inner_eth = (void *)geneve + sizeof(*geneve) + geneve->opt_len * 4;
+      struct ethhdr *inner_eth = inner_packet_start;
       if ((void *)(inner_eth + 1) > data_end) return XDP_DROP;
 
       // Process inner IPv4 packet
@@ -88,6 +112,7 @@ int classify_packet(struct xdp_md *ctx) {
 
         evt.sport = bpf_ntohl(tcp1->source);
         evt.dport = bpf_ntohl(tcp1->dest);
+        evt.payload_len = data_end - (void *)(tcp1 + sizeof(struct tcphdr));
       } else if (inner_ip->protocol == IPPROTO_UDP) {
         evt.protocol = IPPROTO_UDP;
         
@@ -96,8 +121,10 @@ int classify_packet(struct xdp_md *ctx) {
 
         evt.sport = bpf_ntohl(udp1->source);
         evt.dport = bpf_ntohl(udp1->dest);
+        evt.payload_len = data_end - (void *)(udp1 + sizeof(struct udphdr));
       } else if (inner_ip->protocol == IPPROTO_ICMP) {
         evt.protocol = IPPROTO_ICMP;
+        evt.payload_len = data_end - (void *)(inner_ip + inner_ip->ihl*4 + ICMP_HEADER_LENGTH);
       }
 
       evt.saddr = bpf_ntohl(inner_ip->saddr);
