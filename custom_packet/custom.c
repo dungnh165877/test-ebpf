@@ -9,15 +9,37 @@
 
 #define GENEVE_PORT 6081
 #define MAX_LENGTH_OPTION 252
+#define OPT_CLASS 1001
+#define OPT_TYPE 10
+
+// Geneve header option structure
+struct geneve_opt_hdr {
+	__be16 opt_class;
+	__u8 type;
+#ifdef __LITTLE_ENDIAN_BITFIELD
+	__u8 length:5, rsvd:3;
+#else
+	__u8 rsvd:3, length:5;
+#endif
+};
+
+struct geneve_opt_data {
+    __u32 vpc_id;
+};
 
 // Geneve header structure
 struct genevehdr {
-    __u8 opt_len:6, ver:2;       // Option length and version
-    __u8 rsvd:6, critical:1, control:1;  // Reserved, Critical, Control flags
-    __be16 protocol_type;        // Protocol type (e.g., Geneve identifier)
-    __u8 vni[3];                 // VNI (Virtual Network Identifier)
-    __u8 reserved;               // Reserved byte
-} __attribute__((packed));
+#ifdef __LITTLE_ENDIAN_BITFIELD
+	__u8 opt_len:6, ver:2;
+	__u8 rsvd:6, critical:1, control:1;
+#else
+	__u8 ver:2, opt_len:6;
+	__u8 control:1, critical:1, rsvd:6;
+#endif
+	__be16 protocol_type;
+	__u8 vni[3];
+	__u8 reserved;
+};
 
 // Define a generic data map
 struct {
@@ -58,8 +80,10 @@ static __always_inline int process_geneve(struct __sk_buff *skb)
     // Calculate the end of the current options
     __u8 *options_end = options_start + options_length;
 
+    __u8 length_extent_opt = sizeof(struct geneve_opt_hdr) + sizeof(struct geneve_opt_data);
+
     // Ensure there's enough space for adding the new option (4 bytes for vpc_id)
-    if (options_end + 4 > options_start + MAX_LENGTH_OPTION) {
+    if (options_end + length_extent_opt > options_start + MAX_LENGTH_OPTION) {
         return TC_ACT_PIPE;
     }
 
@@ -67,36 +91,37 @@ static __always_inline int process_geneve(struct __sk_buff *skb)
     __u32 key = 1; // Key for vpc_id
     __u32 *vpc_id = bpf_map_lookup_elem(&custom_data_map, &key);
     if (vpc_id) {
-        // Manually move the data after options_end to the right to make space for the vpc_id
-        __u8 *current_pos = (__u8 *)(long)skb->data_end;
-        __u8 *new_pos = current_pos + 4;
-        
-        while (current_pos >= options_end) {
-            *new_pos-- = *current_pos--;
+        if (bpf_skb_adjust_room(skb, length_extent_opt, BPF_ADJ_ROOM_MAC, 0) < 0) {
+            return TC_ACT_SHOT;
         }
 
-        // Add vpc_id to the end of the options
-        *(__u32 *)options_end = bpf_htonl(*vpc_id);
+        void *new_data_end = (void *)(long)skb->data_end;
+
+        struct geneve_opt_hdr opt_hdr = {
+            .opt_class = bpf_htons(OPT_CLASS),
+            .type = OPT_TYPE,
+            .length = sizeof(struct geneve_opt_data) / 4
+        };
+
+        struct geneve_opt_data opt_data = {
+            .vpc_id = *vpc_id
+        };
+
+        if ((void *)(options_end + sizeof(opt_hdr) + sizeof(opt_data)) > new_data_end)
+            return TC_ACT_PIPE;
+
+        __u32 geneve_opt_off = ETH_HLEN + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct genevehdr) + geneve->opt_len * 4;
+
+        if (bpf_skb_store_bytes(skb, geneve_opt_off, &opt_hdr, sizeof(struct geneve_opt_hdr), 0) < 0){
+           return TC_ACT_SHOT;
+        }
+        
+        if (bpf_skb_store_bytes(skb, geneve_opt_off + sizeof(struct geneve_opt_hdr), &opt_data, sizeof(struct geneve_opt_data), 0) < 0){
+           return TC_ACT_SHOT;
+        }
 
         // Update the option length in the Geneve header
-        geneve->opt_len += 1;
-
-        // Update data_end
-        skb->data_end += 4;
-
-        // Update UDP length
-        __u16 old_udp_len = bpf_ntohs(udp->len);
-        __u16 new_udp_len = old_udp_len + 4;
-        udp->len = bpf_htons(new_udp_len);
-        // Update checksum UDP
-        bpf_l4_csum_replace(skb, offsetof(struct udphdr, check), old_udp_len, new_udp_len, BPF_F_PSEUDO_HDR | sizeof(__u16));
-
-        // Update IP total length
-        __u16 old_ip_len = bpf_ntohs(ip->tot_len);
-        __u16 new_ip_len = old_ip_len + 4;
-        ip->tot_len = bpf_htons(new_ip_len);
-        // update checksum IP
-        bpf_l3_csum_replace(skb, offsetof(struct iphdr, check), old_ip_len, new_ip_len, sizeof(__u16));
+        geneve->opt_len += length_extent_opt/4;
     }
 
     return TC_ACT_OK;

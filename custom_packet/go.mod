@@ -1,4 +1,4 @@
-module packet-filter-event
+module custom-packet
 
 go 1.22.2
 
