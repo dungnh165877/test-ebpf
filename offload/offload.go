@@ -30,16 +30,43 @@ const (
 	ProtocolICMP = 1
 )
 
+type IPPrefix struct {
+	BaseIP    uint32
+	PrefixLen uint32
+}
+
+func cidrToIPPrefix(cidr string) (IPPrefix, error) {
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return IPPrefix{}, err
+	}
+
+	baseIP := binary.BigEndian.Uint32(ip.To4())
+	prefixLen, _ := ipnet.Mask.Size()
+
+	return IPPrefix{BaseIP: baseIP, PrefixLen: uint32(prefixLen)}, nil
+}
+
 func main() {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		panic(err)
 	}
 
-	var objs parseObjects
-	if err := loadParseObjects(&objs, nil); err != nil {
+	var objs offloadObjects
+	if err := loadOffloadObjects(&objs, nil); err != nil {
 		panic(err)
 	}
 	defer objs.Close()
+
+	cidr := "10.0.1.0/24"
+	ipPrefix, err := cidrToIPPrefix(cidr)
+	if err != nil {
+		log.Fatalf("Invalid CIDR: %v", err)
+	}
+
+	if err := objs.IpBlockMap.Put(uint32(0), ipPrefix); err != nil {
+		log.Fatalf("Failed to update BPF map: %v", err)
+	}
 
 	ifname := "enp1s0"
 	iface, err := net.InterfaceByName(ifname)
@@ -48,8 +75,9 @@ func main() {
 	}
 
 	linkXDP, err := link.AttachXDP(link.XDPOptions{
-		Program:   objs.ClassifyPacket,
+		Program:   objs.EbpfOffload,
 		Interface: iface.Index,
+		Flags:     link.XDPOffloadMode,
 	})
 	if err != nil {
 		panic(err)

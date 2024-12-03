@@ -22,21 +22,42 @@ struct packet_event {
   __u32 vni;
 } __attribute__((packed));
 
+struct ip_prefix {
+    __u32 base_ip;
+    __u32 prefix_len;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct ip_prefix);
+} ip_block_map SEC(".maps");
+
 struct {
   __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
   __uint(max_entries, 1024);
 } events SEC(".maps");
 
 SEC("xdp")
-int classify_packet(struct xdp_md *ctx) {
+int ebpf_offload(struct xdp_md *ctx) {
   void *data = (void *)(long)ctx->data;
   void *data_end = (void *)(long)ctx->data_end;
+
+  __u32 key = 0;
+  struct ip_prefix *prefix = bpf_map_lookup_elem(&ip_block_map, &key);
+  if (!prefix) return XDP_PASS;
+  __u32 subnet_mask = (0xFFFFFFFF << (32 - prefix->prefix_len));
 
   struct ethhdr *eth = data;
   if ((void *)(eth+1) > data_end) return XDP_PASS;
   if (eth->h_proto == bpf_htons(ETH_P_IP)) {
     struct iphdr *ip = (struct iphdr *)(eth+1);
     if ((void *)(ip+1) > data_end) return XDP_PASS;
+
+    if ((bpf_ntohl(ip->saddr) & subnet_mask) == (prefix->base_ip & subnet_mask)) {
+        return XDP_DROP;
+    }
 
     struct packet_event evt = {};
 
@@ -106,6 +127,10 @@ int classify_packet(struct xdp_md *ctx) {
       // Process inner IPv4 packet
       struct iphdr *inner_ip = (void *)inner_eth + sizeof(*inner_eth);
       if ((void *)(inner_ip + 1) > data_end) return XDP_DROP;
+
+      if ((bpf_ntohl(inner_ip->saddr) & subnet_mask) == (prefix->base_ip & subnet_mask)) {
+        return XDP_DROP;
+      }
 
       if (inner_ip->protocol == IPPROTO_TCP) {
         evt.protocol = IPPROTO_TCP;
