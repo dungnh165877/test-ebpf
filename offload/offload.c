@@ -65,7 +65,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       evt.protocol = IPPROTO_ICMP;
       evt.saddr = bpf_ntohl(ip->saddr);
       evt.daddr = bpf_ntohl(ip->daddr);
-      evt.payload_len = data_end - (void *)(ip + ip->ihl*4 + ICMP_HEADER_LENGTH);
+      evt.payload_len = data_end - ((void *)(ip) + ip->ihl*4 + ICMP_HEADER_LENGTH);
       // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     }
@@ -78,7 +78,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       if ((void *)(tcph+1) > data_end) return XDP_PASS;
       evt.sport = bpf_ntohl(tcph->source);
       evt.dport = bpf_ntohl(tcph->dest);
-      evt.payload_len = data_end - (void *)(tcph + sizeof(struct tcphdr));
+      evt.payload_len = data_end - ((void *)(tcph) + sizeof(struct tcphdr));
       // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     }
@@ -95,7 +95,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       evt.daddr = bpf_ntohl(ip->daddr);
       evt.sport = bpf_ntohl(udp->source);
       evt.dport = bpf_ntohl(udp->dest);
-      evt.payload_len = data_end - (void *)(udp + sizeof(struct udphdr));
+      evt.payload_len = data_end - ((void *)(udp) + sizeof(struct udphdr));
       // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     };
@@ -140,7 +140,7 @@ int ebpf_offload(struct xdp_md *ctx) {
 
         evt.sport = bpf_ntohl(tcp1->source);
         evt.dport = bpf_ntohl(tcp1->dest);
-        evt.payload_len = data_end - (void *)(tcp1 + sizeof(struct tcphdr));
+        evt.payload_len = data_end - ((void *)(tcp1) + sizeof(struct tcphdr));
       } else if (inner_ip->protocol == IPPROTO_UDP) {
         evt.protocol = IPPROTO_UDP;
         
@@ -149,10 +149,10 @@ int ebpf_offload(struct xdp_md *ctx) {
 
         evt.sport = bpf_ntohl(udp1->source);
         evt.dport = bpf_ntohl(udp1->dest);
-        evt.payload_len = data_end - (void *)(udp1 + sizeof(struct udphdr));
+        evt.payload_len = data_end - ((void *)(udp1) + sizeof(struct udphdr));
       } else if (inner_ip->protocol == IPPROTO_ICMP) {
         evt.protocol = IPPROTO_ICMP;
-        evt.payload_len = data_end - (void *)(inner_ip + inner_ip->ihl*4 + ICMP_HEADER_LENGTH);
+        evt.payload_len = data_end - ((void *)(inner_ip) + inner_ip->ihl*4 + ICMP_HEADER_LENGTH);
       }
 
       evt.saddr = bpf_ntohl(inner_ip->saddr);
