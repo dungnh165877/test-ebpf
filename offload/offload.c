@@ -66,7 +66,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       evt.saddr = bpf_ntohl(ip->saddr);
       evt.daddr = bpf_ntohl(ip->daddr);
       evt.payload_len = data_end - (void *)(ip + ip->ihl*4 + ICMP_HEADER_LENGTH);
-      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     }
 
@@ -79,7 +79,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       evt.sport = bpf_ntohl(tcph->source);
       evt.dport = bpf_ntohl(tcph->dest);
       evt.payload_len = data_end - (void *)(tcph + sizeof(struct tcphdr));
-      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     }
 
@@ -96,7 +96,7 @@ int ebpf_offload(struct xdp_md *ctx) {
       evt.sport = bpf_ntohl(udp->source);
       evt.dport = bpf_ntohl(udp->dest);
       evt.payload_len = data_end - (void *)(udp + sizeof(struct udphdr));
-      bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
+      // bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &evt, sizeof(evt));
       return XDP_PASS;
     };
 

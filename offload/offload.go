@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
@@ -48,6 +49,7 @@ func cidrToIPPrefix(cidr string) (IPPrefix, error) {
 }
 
 func main() {
+	startLoad := time.Now()
 	if err := rlimit.RemoveMemlock(); err != nil {
 		panic(err)
 	}
@@ -56,9 +58,9 @@ func main() {
 	if err := loadOffloadObjects(&objs, nil); err != nil {
 		panic(err)
 	}
-	defer objs.Close()
+	// defer objs.Close()
 
-	cidr := "10.0.1.0/24"
+	cidr := "10.30.5.0/24"
 	ipPrefix, err := cidrToIPPrefix(cidr)
 	if err != nil {
 		log.Fatalf("Invalid CIDR: %v", err)
@@ -77,20 +79,21 @@ func main() {
 	linkXDP, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.EbpfOffload,
 		Interface: iface.Index,
-		Flags:     link.XDPOffloadMode,
 	})
 	if err != nil {
 		panic(err)
 	}
-	defer linkXDP.Close()
+	// defer linkXDP.Close()
 
+	loadDuration := time.Since(startLoad)
+	log.Printf("Time to load eBPF program: %v\n", loadDuration)
 	log.Printf("connected to %s interface", ifname)
 
 	rd, err := perf.NewReader(objs.Events, os.Getpagesize())
 	if err != nil {
 		panic(err)
 	}
-	defer rd.Close()
+	// defer rd.Close()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
@@ -137,6 +140,19 @@ func main() {
 
 	<-sig
 	log.Println("Exiting...")
+
+	startUnload := time.Now()
+	if err := rd.Close(); err != nil {
+		log.Printf("Error closing perf reader: %v", err)
+	}
+	if err := linkXDP.Close(); err != nil {
+		log.Printf("Error detaching XDP: %v", err)
+	}
+	if err := objs.Close(); err != nil {
+		log.Printf("Error closing eBPF objects: %v", err)
+	}
+	unloadDuration := time.Since(startUnload)
+	log.Printf("Time to unload eBPF program: %v\n", unloadDuration)
 }
 
 func IntToIP(nn uint32) string {
