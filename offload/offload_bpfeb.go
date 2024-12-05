@@ -67,6 +67,7 @@ type offloadProgramSpecs struct {
 type offloadMapSpecs struct {
 	Events     *ebpf.MapSpec `ebpf:"events"`
 	IpBlockMap *ebpf.MapSpec `ebpf:"ip_block_map"`
+	PktCount   *ebpf.MapSpec `ebpf:"pkt_count"`
 }
 
 // offloadObjects contains all objects after they have been loaded into the kernel.
@@ -90,12 +91,14 @@ func (o *offloadObjects) Close() error {
 type offloadMaps struct {
 	Events     *ebpf.Map `ebpf:"events"`
 	IpBlockMap *ebpf.Map `ebpf:"ip_block_map"`
+	PktCount   *ebpf.Map `ebpf:"pkt_count"`
 }
 
 func (m *offloadMaps) Close() error {
 	return _OffloadClose(
 		m.Events,
 		m.IpBlockMap,
+		m.PktCount,
 	)
 }
 

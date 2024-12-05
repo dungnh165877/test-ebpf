@@ -13,16 +13,20 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/google/gopacket/layers"
 )
 
 type PacketEvent struct {
-	Protocol   uint32
-	PayloadLen uint32
-	SrcAddr    uint32
-	DstAddr    uint32
-	SrcPort    uint16
-	DstPort    uint16
-	VNI        uint32
+	Type        uint8
+	Protocol    uint32
+	PayloadLen  uint32
+	SrcAddr     uint32
+	DstAddr     uint32
+	SrcPort     uint16
+	DstPort     uint16
+	VNI         uint32
+	IngressPort uint16
+	EgressPort  uint16
 }
 
 const (
@@ -83,7 +87,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	// defer linkXDP.Close()
 
 	loadDuration := time.Since(startLoad)
 	log.Printf("Time to load eBPF program: %v\n", loadDuration)
@@ -93,7 +96,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	// defer rd.Close()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
@@ -113,33 +115,40 @@ func main() {
 				log.Printf("error parsing event: %v", err)
 				continue
 			}
-			protocol := ""
-			switch event.Protocol {
-			case ProtocolTCP:
-				protocol = "tcp"
-			case ProtocolUDP:
-				protocol = "udp"
-			case ProtocolICMP:
-				protocol = "icmp"
+			protocol := layers.IPProtocol(event.Protocol)
+			var packetType string
+			if event.Type == 0 {
+				packetType = "normal"
+			} else if event.Type == 1 {
+				packetType = "geneve"
 			}
-			// if event.Protocol != ProtocolUDP {
-			// 	continue
-			// }
 
-			log.Printf("packet received: protocol=%s payload_length=%d, src:%s, dst:%s, srcp:%d, dstp:%d, vni: %d",
+			log.Printf("packet %s received:\nprotocol=%d-%s payload_length=%d.\nsrc:%s, dst:%s, srcp: %d, dstp: %d.\nvni: %d, inport: %d, eport: %d.\n%s\n",
+				packetType,
 				protocol,
+				protocol.String(),
 				event.PayloadLen,
 				IntToIP(event.SrcAddr),
 				IntToIP(event.DstAddr),
 				event.SrcPort,
 				event.DstPort,
 				event.VNI,
+				event.IngressPort,
+				event.EgressPort,
+				"--------------------------------------------------------------------------------------",
 			)
 		}
 	}()
 
 	<-sig
 	log.Println("Exiting...")
+
+	var count uint64
+	err = objs.PktCount.Lookup(uint32(0), &count)
+	if err != nil {
+		log.Fatal("Map lookup", err)
+	}
+	log.Printf("Received %d packets", count)
 
 	startUnload := time.Now()
 	if err := rd.Close(); err != nil {
